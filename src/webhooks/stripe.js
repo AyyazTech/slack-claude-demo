@@ -5,6 +5,9 @@ const TOLERANCE_SECONDS = 5 * 60;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 250;
 
+const processedEvents = new Set();
+const PROCESSED_EVENTS_MAX_SIZE = 10000;
+
 function verifySignature(rawBody, header) {
   if (!header || !STRIPE_SECRET) return false;
   const parts = Object.fromEntries(
@@ -19,6 +22,7 @@ function verifySignature(rawBody, header) {
 
   const payload = `${timestamp}.${rawBody}`;
   const expected = crypto.createHmac('sha256', STRIPE_SECRET).update(payload).digest('hex');
+  if (expected.length !== signature.length) return false;
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
@@ -40,6 +44,9 @@ const HANDLERS = {
   'payment_intent.succeeded': async (event) => {
     console.log('[stripe] payment succeeded', event.data.object.id);
   },
+  'invoice.payment_succeeded': async (event) => {
+    console.log('[stripe] invoice payment succeeded', event.data.object.id);
+  },
   'invoice.payment_failed': async (event) => {
     console.warn('[stripe] invoice payment failed', event.data.object.id);
   },
@@ -53,8 +60,16 @@ async function handleStripeWebhook(req, res) {
     return res.status(400).json({ error: 'invalid_signature' });
   }
 
-  // BUG: JSON.parse can throw on malformed payloads; not wrapped in try/catch.
-  const event = JSON.parse(rawBody);
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return res.status(400).json({ error: 'invalid_json' });
+  }
+
+  if (processedEvents.has(event.id)) {
+    return res.status(200).json({ received: true, handled: false, duplicate: true });
+  }
 
   const handler = HANDLERS[event.type];
   if (!handler) {
@@ -63,6 +78,11 @@ async function handleStripeWebhook(req, res) {
 
   try {
     await dispatchWithRetry(handler, event);
+    if (processedEvents.size >= PROCESSED_EVENTS_MAX_SIZE) {
+      const firstKey = processedEvents.values().next().value;
+      processedEvents.delete(firstKey);
+    }
+    processedEvents.add(event.id);
     return res.status(200).json({ received: true, handled: true });
   } catch (err) {
     console.error('[stripe] handler failed after retries', err);
@@ -70,4 +90,8 @@ async function handleStripeWebhook(req, res) {
   }
 }
 
-module.exports = { handleStripeWebhook, verifySignature, dispatchWithRetry };
+function clearProcessedEvents() {
+  processedEvents.clear();
+}
+
+module.exports = { handleStripeWebhook, verifySignature, dispatchWithRetry, clearProcessedEvents };
