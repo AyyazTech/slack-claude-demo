@@ -6,8 +6,10 @@ const config = {
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || 'postgres',
   database: process.env.PGDATABASE || 'slack_claude_demo',
-  max: Number(process.env.PG_POOL_MAX || 10),
+  max: Number(process.env.PG_POOL_MAX || 20),
   idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+  statement_timeout: 10_000,
 };
 
 let pool;

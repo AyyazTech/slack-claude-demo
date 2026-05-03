@@ -1,9 +1,15 @@
 const express = require('express');
 const { authenticate } = require('./auth/middleware');
 const { query } = require('./db/connection');
+const { processWebhook } = require('./webhooks/stripe');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, res, next) => {
+  req.rawBody = req.body;
+  next();
+}, processWebhook);
 
 app.use(express.json());
 
